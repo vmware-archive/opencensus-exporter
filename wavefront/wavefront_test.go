@@ -74,12 +74,12 @@ func (s *FakeSender) Close() {
 func init() {
 	appTags = application.New("test-app", "test-service")
 	sender := &FakeSender{Echo: true}
-	fakeExp, _ = NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE))
+	fakeExp, _ = NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
 
 	sender2 := &FakeSender{Echo: false}
-	benchExp, _ = NewExporter(sender2, Source("FakeSource"), AppTags(appTags), QueueSize(0)) // Drop msgs when benching
+	benchExp, _ = NewExporter(sender2, Source("FakeSource"), AppTags(appTags), QueueSize(0), DisableSelfHealth()) // Drop msgs when benching
 
-	senderErr = &FakeSender{Error: errors.New("FakeError")}
+	senderErr = &FakeSender{Echo: true, Error: errors.New("FakeError")}
 
 	vd1 = &view.Data{
 		Start: time.Now(),
@@ -228,29 +228,6 @@ func TestProcessSpan(t *testing.T) {
 	fakeExp.Flush()
 }
 
-func TestQueueErrors(t *testing.T) {
-	errorExp, _ := NewExporter(senderErr, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), QueueSize(0))
-	errorExp.ExportSpan(sd1)
-	errorExp.ExportView(vd1)
-	errorExp.ExportView(vd4)
-	errorExp.Flush()
-	if errorExp.SpansDropped() != 1 || errorExp.MetricsDropped() != 2 {
-		t.FailNow()
-	}
-}
-
-func TestSenderErrors(t *testing.T) {
-	errorExp, _ := NewExporter(senderErr, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE))
-	errorExp.ExportSpan(sd1)
-	errorExp.ExportView(vd1)
-	errorExp.ExportView(vd4)
-	errorExp.Flush()
-
-	if errorExp.SenderErrors() != 3 {
-		t.FailNow()
-	}
-}
-
 func TestProcessView(tt *testing.T) {
 	tt.Run("MetricLV", func(t *testing.T) {
 		fakeExp.processView(vd1)
@@ -268,7 +245,47 @@ func TestProcessView(tt *testing.T) {
 	fakeExp.Flush()
 }
 
-func BenchmarkProcessSpan(t *testing.B) {
+func TestNegativeQueueSize(t *testing.T) {
+	sender := &FakeSender{Echo: false}
+	errorExp, err := NewExporter(sender, Source("FakeSource"), QueueSize(-10))
+	if errorExp != nil || err == nil {
+		t.FailNow()
+	}
+}
+
+func TestQueueErrors(t *testing.T) {
+	sender := &FakeSender{Echo: false}
+	errorExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), QueueSize(0), VerboseLogging())
+	errorExp.selfHealthTicker.Stop()
+	errorExp.selfHealthTicker = time.NewTicker(500 * time.Millisecond)
+
+	errorExp.ExportSpan(sd1)
+	errorExp.ExportView(vd1)
+	errorExp.ExportView(vd4)
+	time.Sleep(time.Second)
+	errorExp.Stop()
+	if errorExp.SpansDropped() != 1 || errorExp.MetricsDropped() != 2 {
+		t.FailNow()
+	}
+}
+
+func TestSenderErrors(t *testing.T) {
+	errorExp, _ := NewExporter(senderErr, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), VerboseLogging())
+	errorExp.selfHealthTicker.Stop()
+	errorExp.selfHealthTicker = time.NewTicker(500 * time.Millisecond)
+
+	errorExp.ExportSpan(sd1)
+	errorExp.ExportView(vd1)
+	errorExp.ExportView(vd4)
+	time.Sleep(time.Second)
+	errorExp.Stop()
+
+	if errorExp.SenderErrors() < 3 {
+		t.FailNow()
+	}
+}
+
+func BenchmarkProcessSpan(bb *testing.B) {
 
 	exs := &trace.SpanData{
 		SpanContext: trace.SpanContext{
@@ -282,7 +299,7 @@ func BenchmarkProcessSpan(t *testing.B) {
 		EndTime:      time.Now(),
 	}
 
-	t.Run("Basic", func(b *testing.B) {
+	bb.Run("Basic", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
@@ -293,7 +310,7 @@ func BenchmarkProcessSpan(t *testing.B) {
 		Message: "all ok",
 	}
 
-	t.Run("+OkStatus", func(b *testing.B) {
+	bb.Run("+OkStatus", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
@@ -304,7 +321,7 @@ func BenchmarkProcessSpan(t *testing.B) {
 		Message: "some error",
 	}
 
-	t.Run("+ErrorStatus", func(b *testing.B) {
+	bb.Run("+ErrorStatus", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
@@ -316,7 +333,7 @@ func BenchmarkProcessSpan(t *testing.B) {
 		"foo3": 42,
 	}
 
-	t.Run("+Attributes", func(b *testing.B) {
+	bb.Run("+Attributes", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
@@ -327,7 +344,7 @@ func BenchmarkProcessSpan(t *testing.B) {
 		{Message: "Annotate", Attributes: map[string]interface{}{"key2": 1.234}},
 	}
 
-	t.Run("+Annotations", func(b *testing.B) {
+	bb.Run("+Annotations", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
@@ -338,21 +355,21 @@ func BenchmarkProcessSpan(t *testing.B) {
 		{EventType: 1, MessageID: 0x1, UncompressedByteSize: 0xc8, CompressedByteSize: 0x64},
 	}
 
-	t.Run("+MsgEvents", func(b *testing.B) {
+	bb.Run("+MsgEvents", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processSpan(exs)
 		}
 	})
 }
 
-func BenchmarkProcessView(t *testing.B) {
+func BenchmarkProcessView(bb *testing.B) {
 
-	t.Run("Metric", func(b *testing.B) {
+	bb.Run("Metric", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processView(vd1)
 		}
 	})
-	t.Run("Distribution", func(b *testing.B) {
+	bb.Run("Distribution", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			benchExp.processView(vd2)
 		}

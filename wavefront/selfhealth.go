@@ -42,6 +42,10 @@ func (e *Exporter) ReportSelfHealth() {
 
 // StopSelfHealth stops reporting exporter specific metrics
 func (e *Exporter) StopSelfHealth() {
+	if e.stopSelfHealth == nil {
+		return
+	}
+
 	e.stopSelfHealth <- struct{}{}
 	e.stopSelfHealth = nil
 	e.sendSelfHealth()

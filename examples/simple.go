@@ -20,8 +20,8 @@ import (
 var (
 	appHB application.HeartbeatService
 
-	workTime   = stats.Int64("work-times.sum", "", stats.UnitMilliseconds)
-	totalWorks = stats.Int64("works.count", "", stats.UnitDimensionless)
+	workTime   = stats.Int64("ocexample.works.time", "", stats.UnitMilliseconds)
+	totalWorks = stats.Int64("ocexample.works.count", "", stats.UnitDimensionless)
 
 	exporter *wavefront.Exporter
 )
@@ -33,13 +33,13 @@ func main() {
 	proxyCfg := &senders.ProxyConfiguration{
 		Host:             "Your_Proxy_Host_Or_IP",
 		MetricsPort:      2878,
+		TracingPort:      30000,
 		DistributionPort: 40000,
-		TracingPort:      50000,
 	}
 	sender, _ := senders.NewProxySender(proxyCfg)
 	defer sender.Close()
 
-	appTags := application.New("opencensus-example", "example-service")
+	appTags := application.New("opencensus-example", "simple-service")
 
 	// Configure Wavefront Exporter
 	qSize := 10
@@ -50,12 +50,9 @@ func main() {
 	if err != nil {
 		log.Fatal("Could not create Wavefront Exporter:", err)
 	}
-	defer func() {
-		exporter.StopSelfHealth()
-		exporter.Flush()
-	}()
+	defer exporter.Stop()
 
-	appHB = application.StartHeartbeatService(sender, appTags, "", "example-service", "exporter-service")
+	appHB = application.StartHeartbeatService(sender, appTags, "", "simple-service", "exporter-service")
 
 	// Register exporter with OpenCensus
 	trace.RegisterExporter(exporter)
@@ -65,15 +62,15 @@ func main() {
 
 	// Register Views
 	if verr := view.Register(&view.View{
-		Name:        "work-times.sum",
+		Name:        "ocexample.works.time",
 		Description: "",
 		Measure:     workTime,
-		Aggregation: view.Sum(),
+		Aggregation: view.LastValue(),
 	}); verr != nil {
 		log.Fatal("Could not register view:", err)
 	}
 	if verr := view.Register(&view.View{
-		Name:        "works.count",
+		Name:        "ocexample.works.count",
 		Description: "",
 		Measure:     totalWorks,
 		Aggregation: view.Count(),
@@ -82,6 +79,7 @@ func main() {
 	}
 
 	for { // generate metrics endlessly
+		fmt.Println("Random work...")
 		parent(ctx)
 		time.Sleep(5 * time.Second)
 	}
@@ -90,10 +88,12 @@ func main() {
 
 func parent(ctx context.Context) {
 	ctx, span := trace.StartSpan(ctx, "main")
+	start_time := time.Now()
 	for i := 0; i < 5; i++ {
 		stats.Record(ctx, totalWorks.M(1))
 		work(ctx, i+1)
 	}
+	stats.Record(ctx, workTime.M(time.Since(start_time).Nanoseconds()/1e6))
 	time.Sleep(500 * time.Millisecond)
 	span.End()
 }
@@ -103,6 +103,5 @@ func work(ctx context.Context, index int) {
 	defer span.End()
 
 	rand_time := 100 + rand.Int63n(100)
-	stats.Record(ctx, workTime.M(rand_time))
 	time.Sleep(time.Duration(rand_time) * time.Millisecond) // work
 }
