@@ -1,6 +1,9 @@
+// Package wavefront provides OpenCensus trace and stats support
+// to push metrics, histograms and traces into Wavefront.
 package wavefront
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -22,11 +25,12 @@ const (
 
 // Options
 type Options struct {
-	Source         string
-	Hgs            map[histogram.Granularity]bool
-	VerboseLogging bool
-	appMap         map[string]string
-	qSize          int
+	Source            string
+	Hgs               map[histogram.Granularity]bool
+	appMap            map[string]string
+	qSize             int
+	VerboseLogging    bool
+	DisableSelfHealth bool
 }
 
 type Option func(*Options)
@@ -57,12 +61,19 @@ func AppTags(app application.Tags) Option {
 	}
 }
 
-// QueueSize sets the maximum size of the queue which holds
-// requests that are waiting to be sent.
+// QueueSize sets the maximum number of queued metrics and spans.
 // Spans/Metrics are dropped if the Queue is full
 func QueueSize(queueSize int) Option {
 	return func(o *Options) {
 		o.qSize = queueSize
+	}
+}
+
+// DisableSelfHealth disables sending exporter health metrics
+// such as dropped metrics and spans
+func DisableSelfHealth() Option {
+	return func(o *Options) {
+		o.DisableSelfHealth = true
 	}
 }
 
@@ -91,7 +102,7 @@ type Exporter struct {
 // Documentation for Wavefront Sender is available at
 // https://github.com/wavefrontHQ/wavefront-sdk-go
 //
-// Options adds additional options to the exporter.
+// Option... add additional options to the exporter.
 func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 	defOptions := Options{
 		Source: DefaultSource,
@@ -103,13 +114,19 @@ func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 		o(&defOptions)
 	}
 
+	if defOptions.qSize < 0 {
+		return nil, errors.New("QueueSize cannot be negative")
+	}
+
 	exp := &Exporter{
 		sender:  sender,
 		Options: defOptions,
 		sem:     make(chan struct{}, defOptions.qSize),
 	}
 
-	exp.ReportSelfHealth() // Disable by default?
+	if !exp.DisableSelfHealth {
+		exp.ReportSelfHealth() // Disable by default?
+	}
 
 	return exp, nil
 }
@@ -118,6 +135,13 @@ func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 func (e *Exporter) Flush() {
 	e.wg.Wait()
 	e.sender.Flush()
+}
+
+func (e *Exporter) Stop() {
+	e.StopSelfHealth()
+	e.Flush()
+	close(e.sem)
+	e.sem = nil
 }
 
 // ExportSpan exports given span to Wavefront
@@ -133,6 +157,9 @@ func (e *Exporter) ExportView(viewData *view.Data) {
 // Helpers
 
 func (e *Exporter) queueCmd(cmd SendCmd) bool {
+	if e.sem == nil {
+		return false
+	}
 	select {
 	case e.sem <- struct{}{}:
 		e.wg.Add(1)
