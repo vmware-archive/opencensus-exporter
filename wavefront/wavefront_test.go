@@ -3,6 +3,9 @@ package wavefront
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,27 +13,75 @@ import (
 	"github.com/wavefronthq/wavefront-sdk-go/histogram"
 	"github.com/wavefronthq/wavefront-sdk-go/senders"
 
-	"go.opencensus.io/exemplar"
+	"go.opencensus.io/metric/metricdata"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 )
 
-var fakeExp, benchExp *Exporter
-var vd1, vd2, vd3, vd4 *view.Data
-var sd1, sd2 *trace.SpanData
-var senderErr senders.Sender
-var appTags application.Tags
-
 // Fake Sender
 type FakeSender struct {
 	Echo         bool
 	Error        error
 	FailureCount int64
+	TestData     map[string][]interface{}
+	mutex        sync.Mutex
+}
+
+var fakeExp, benchExp *Exporter
+var vd1, vd2, vd3, vd4 *view.Data
+var sd1, sd2 *trace.SpanData
+var senderErr *FakeSender
+var appTags application.Tags
+
+func newFake() *FakeSender {
+	return &FakeSender{
+		Echo:     false,
+		TestData: nil,
+		mutex:    sync.Mutex{},
+	}
+}
+
+func (s *FakeSender) update(name string, have []interface{}) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.TestData == nil {
+		return
+	}
+
+	if _, set := s.TestData[name]; !set {
+		s.TestData["^^^^"+name] = have
+		return
+	}
+
+	if reflect.DeepEqual(s.TestData[name], have) {
+		delete(s.TestData, name)
+	} else {
+		fmt.Println("MISMATCH", name)
+		fmt.Printf("HAVE %#v\n", have)
+		fmt.Printf("WANT %#v\n", s.TestData[name])
+	}
+
+}
+
+func (s *FakeSender) verify() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.TestData == nil || len(s.TestData) == 0 {
+		return true
+	}
+
+	for k, v := range s.TestData {
+		fmt.Printf("%s => %#v\n", k, v)
+	}
+	return false
 }
 
 func (s *FakeSender) SendMetric(name string, value float64, ts int64, source string, tags map[string]string) error {
+	have := []interface{}{name, value, ts, source, tags}
+	s.update(name, have)
+
 	if s.Echo {
 		fmt.Println(name, value, ts, source, tags)
 	}
@@ -38,6 +89,9 @@ func (s *FakeSender) SendMetric(name string, value float64, ts int64, source str
 }
 
 func (s *FakeSender) SendDeltaCounter(name string, value float64, source string, tags map[string]string) error {
+	have := []interface{}{name, value, source, tags}
+	s.update(name, have)
+
 	if s.Echo {
 		fmt.Println(name, value, source, tags)
 	}
@@ -45,15 +99,23 @@ func (s *FakeSender) SendDeltaCounter(name string, value float64, source string,
 }
 
 func (s *FakeSender) SendDistribution(name string, centroids []histogram.Centroid, hgs map[histogram.Granularity]bool, ts int64, source string, tags map[string]string) error {
+	have := []interface{}{name, centroids, hgs, ts, source, tags}
+	s.update(name, have)
+
 	if s.Echo {
 		fmt.Println(name, centroids, hgs, ts, source, tags)
 	}
 	return s.Error
 }
 
-func (s *FakeSender) SendSpan(name string, startMillis, durationMillis int64, source, traceId, spanId string, parents, followsFrom []string, tags []senders.SpanTag, spanLogs []senders.SpanLog) error {
+func (s *FakeSender) SendSpan(name string, startMillis, durationMillis int64, source, traceID, spanID string, parents, followsFrom []string, tags []senders.SpanTag, spanLogs []senders.SpanLog) error {
+	sort.SliceStable(tags, func(i1, i2 int) bool { return tags[i1].Key < tags[i2].Key })
+
+	have := []interface{}{name, startMillis, durationMillis, source, traceID, spanID, parents, followsFrom, tags, spanLogs}
+	s.update(name, have)
+
 	if s.Echo {
-		fmt.Println(name, startMillis, durationMillis, source, traceId, spanId, parents, followsFrom, tags, spanLogs)
+		fmt.Println(name, startMillis, durationMillis, source, traceID, spanID, parents, followsFrom, tags, spanLogs)
 	}
 	return s.Error
 }
@@ -73,17 +135,16 @@ func (s *FakeSender) Close() {
 
 func init() {
 	appTags = application.New("test-app", "test-service")
-	sender := &FakeSender{Echo: true}
-	fakeExp, _ = NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
 
-	sender2 := &FakeSender{Echo: false}
-	benchExp, _ = NewExporter(sender2, Source("FakeSource"), AppTags(appTags), QueueSize(0), DisableSelfHealth()) // Drop msgs when benching
+	sender := newFake()
+	benchExp, _ = NewExporter(sender, Source("FakeSource"), AppTags(appTags), QueueSize(0), DisableSelfHealth()) // Drop msgs when benching
 
-	senderErr = &FakeSender{Echo: true, Error: errors.New("FakeError")}
+	senderErr = newFake()
+	senderErr.Error = errors.New("FakeError")
 
 	vd1 = &view.Data{
-		Start: time.Now(),
-		End:   time.Now(),
+		Start: time.Unix(12345, 0),
+		End:   time.Unix(67890, 1e6),
 		View: &view.View{
 			Name:        "v1",
 			Description: "v1",
@@ -101,8 +162,8 @@ func init() {
 	}
 
 	vd2 = &view.Data{
-		Start: time.Now(),
-		End:   time.Now(),
+		Start: time.Unix(12345, 0),
+		End:   time.Unix(67890, 1e6),
 		View: &view.View{
 			Name:        "v2",
 			Description: "v2",
@@ -120,8 +181,8 @@ func init() {
 	}
 
 	vd3 = &view.Data{
-		Start: time.Now(),
-		End:   time.Now(),
+		Start: time.Unix(12345, 0),
+		End:   time.Unix(67890, 1e6),
 		View: &view.View{
 			Name:        "v3",
 			Description: "v3",
@@ -139,8 +200,8 @@ func init() {
 	}
 
 	vd4 = &view.Data{
-		Start: time.Now(),
-		End:   time.Now(),
+		Start: time.Unix(12345, 0),
+		End:   time.Unix(67890, 1e6),
 		View: &view.View{
 			Name:        "v4",
 			Description: "v4",
@@ -153,10 +214,10 @@ func init() {
 				Data: &view.DistributionData{
 					Count: 2, Min: 9, Max: 27, Mean: 18, SumOfSquaredDev: 0,
 					CountPerBucket: []int64{1, 2, 1},
-					ExemplarsPerBucket: []*exemplar.Exemplar{
-						&exemplar.Exemplar{Value: 9},
-						&exemplar.Exemplar{Value: 27},
-						&exemplar.Exemplar{Value: 37},
+					ExemplarsPerBucket: []*metricdata.Exemplar{
+						&metricdata.Exemplar{Value: 9},
+						&metricdata.Exemplar{Value: 27},
+						&metricdata.Exemplar{Value: 37},
 					},
 				},
 			},
@@ -169,10 +230,10 @@ func init() {
 			SpanID:       trace.SpanID{0, 1, 2, 3, 4, 5, 6, 7},
 			TraceOptions: 0x1,
 		},
+		StartTime:    time.Unix(12345, 0),
+		EndTime:      time.Unix(67890, 1e6),
 		ParentSpanID: trace.SpanID{},
 		Name:         "span",
-		StartTime:    time.Now(),
-		EndTime:      time.Now(),
 		Status: trace.Status{
 			Code:    trace.StatusCodeUnknown,
 			Message: "some error",
@@ -183,25 +244,25 @@ func init() {
 			"foo3": 42,
 		},
 		Annotations: []trace.Annotation{
-			{Message: "1.500000", Attributes: map[string]interface{}{"key1": float32(1.0)}},
-			{Message: "Annotate", Attributes: map[string]interface{}{"key2": uint8(5)}},
+			{Time: time.Unix(12345, 0), Message: "1.500000", Attributes: map[string]interface{}{"key1": float32(1.0)}},
+			{Time: time.Unix(12345, 0), Message: "Annotate", Attributes: map[string]interface{}{"key2": uint8(5)}},
 		},
 		MessageEvents: []trace.MessageEvent{
-			{EventType: 2, MessageID: 0x3, UncompressedByteSize: 0x190, CompressedByteSize: 0x12c},
-			{EventType: 1, MessageID: 0x1, UncompressedByteSize: 0xc8, CompressedByteSize: 0x64},
+			{Time: time.Unix(12345, 0), EventType: 2, MessageID: 0x3, UncompressedByteSize: 0x190, CompressedByteSize: 0x12c},
+			{Time: time.Unix(12345, 0), EventType: 1, MessageID: 0x1, UncompressedByteSize: 0xc8, CompressedByteSize: 0x64},
 		},
 	}
 
 	sd2 = &trace.SpanData{
 		SpanContext: trace.SpanContext{
-			TraceID:      trace.TraceID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+			TraceID:      trace.TraceID{1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 			SpanID:       trace.SpanID{8, 9, 10, 11, 12, 13, 14},
 			TraceOptions: 0x1,
 		},
 		ParentSpanID: trace.SpanID{0, 1, 2, 3, 4, 5, 6, 7},
-		Name:         "span",
-		StartTime:    time.Now(),
-		EndTime:      time.Now(),
+		Name:         "span2",
+		StartTime:    time.Unix(12345, 0),
+		EndTime:      time.Unix(67890, 1e6),
 		Status: trace.Status{
 			Code:    trace.StatusCodeUnknown,
 			Message: "some error",
@@ -212,23 +273,47 @@ func init() {
 			"foo3": 42,
 		},
 		Annotations: []trace.Annotation{
-			{Message: "1.500000", Attributes: map[string]interface{}{"key1": float32(1.0)}},
-			{Message: "Annotate", Attributes: map[string]interface{}{"key2": uint8(5)}},
+			{Time: time.Unix(12345, 0), Message: "1.500000", Attributes: map[string]interface{}{"key1": float32(1.0)}},
+			{Time: time.Unix(12345, 0), Message: "Annotate", Attributes: map[string]interface{}{"key2": uint8(5)}},
 		},
 		MessageEvents: []trace.MessageEvent{
-			{EventType: 2, MessageID: 0x3, UncompressedByteSize: 0x190, CompressedByteSize: 0x12c},
-			{EventType: 1, MessageID: 0x1, UncompressedByteSize: 0xc8, CompressedByteSize: 0x64},
+			{Time: time.Unix(12345, 0), EventType: 2, MessageID: 0x3, UncompressedByteSize: 0x190, CompressedByteSize: 0x12c},
+			{Time: time.Unix(12345, 0), EventType: 1, MessageID: 0x1, UncompressedByteSize: 0xc8, CompressedByteSize: 0x64},
 		},
 	}
+
 }
 
 func TestProcessSpan(t *testing.T) {
-	fakeExp.ExportSpan(sd1)
-	fakeExp.ExportSpan(sd2)
+	sender := newFake()
+
+	sender.TestData = map[string][]interface{}{}
+
+	sender.TestData["span"] = []interface{}{"span", int64(12345000), int64(55545001), "FakeSource", "00010203-0405-0607-0809-0a0b0c0d0e0f", "00000000-0000-0000-0001-020304050607", []string(nil), []string(nil), []senders.SpanTag{senders.SpanTag{Key: "application", Value: "test-app"}, senders.SpanTag{Key: "cluster", Value: "none"}, senders.SpanTag{Key: "error", Value: "true"}, senders.SpanTag{Key: "error_code", Value: "Unknown"}, senders.SpanTag{Key: "foo1", Value: "bar1"}, senders.SpanTag{Key: "foo2", Value: "5.25"}, senders.SpanTag{Key: "foo3", Value: "42"}, senders.SpanTag{Key: "service", Value: "test-service"}, senders.SpanTag{Key: "shard", Value: "none"}}, []senders.SpanLog{senders.SpanLog{Timestamp: 67890001, Fields: map[string]string{"event": "error", "message": "some error"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"key1": "1", "log_msg": "1.500000"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"key2": "5", "log_msg": "Annotate"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"MsgCompressedByteSize": "300", "MsgID": "3", "MsgType": "received", "MsgUncompressedByteSize": "400"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"MsgCompressedByteSize": "100", "MsgID": "1", "MsgType": "sent", "MsgUncompressedByteSize": "200"}}}}
+	sender.TestData["span2"] = []interface{}{"span2", int64(12345000), int64(55545001), "FakeSource", "01010203-0405-0607-0809-0a0b0c0d0e0f", "00000000-0000-0000-0809-0a0b0c0d0e00", []string{"00000000-0000-0000-0001-020304050607"}, []string(nil), []senders.SpanTag{senders.SpanTag{Key: "application", Value: "test-app"}, senders.SpanTag{Key: "cluster", Value: "none"}, senders.SpanTag{Key: "error", Value: "true"}, senders.SpanTag{Key: "error_code", Value: "Unknown"}, senders.SpanTag{Key: "foo1", Value: "bar1"}, senders.SpanTag{Key: "foo2", Value: "5.25"}, senders.SpanTag{Key: "foo3", Value: "42"}, senders.SpanTag{Key: "service", Value: "test-service"}, senders.SpanTag{Key: "shard", Value: "none"}}, []senders.SpanLog{senders.SpanLog{Timestamp: 67890001, Fields: map[string]string{"event": "error", "message": "some error"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"key1": "1", "log_msg": "1.500000"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"key2": "5", "log_msg": "Annotate"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"MsgCompressedByteSize": "300", "MsgID": "3", "MsgType": "received", "MsgUncompressedByteSize": "400"}}, senders.SpanLog{Timestamp: 12345000, Fields: map[string]string{"MsgCompressedByteSize": "100", "MsgID": "1", "MsgType": "sent", "MsgUncompressedByteSize": "200"}}}}
+
+	fakeExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
+
+	fakeExp.processSpan(sd1)
+	fakeExp.processSpan(sd2)
 	fakeExp.Flush()
+
+	if !sender.verify() || fakeExp.SenderErrors() > 0 {
+		t.Fail()
+	}
 }
 
 func TestProcessView(tt *testing.T) {
+	sender := newFake()
+
+	sender.TestData = map[string][]interface{}{}
+	sender.TestData["v1"] = []interface{}{"v1", float64(4.5), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v1unit"}}
+	sender.TestData["v2"] = []interface{}{"v2", float64(4), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v1unit"}}
+	sender.TestData["v3"] = []interface{}{"v3", float64(4), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v3unit"}}
+	sender.TestData["v4"] = []interface{}{"v4", []histogram.Centroid{histogram.Centroid{Value: 9, Count: 1}, histogram.Centroid{Value: 20, Count: 2}, histogram.Centroid{Value: 37, Count: 1}}, map[histogram.Granularity]bool{0: true}, int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+
+	fakeExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
+
 	tt.Run("MetricLV", func(t *testing.T) {
 		fakeExp.processView(vd1)
 	})
@@ -243,10 +328,14 @@ func TestProcessView(tt *testing.T) {
 	})
 
 	fakeExp.Flush()
+
+	if !sender.verify() || fakeExp.SenderErrors() > 0 {
+		tt.Fail()
+	}
 }
 
 func TestNegativeQueueSize(t *testing.T) {
-	sender := &FakeSender{Echo: false}
+	sender := newFake()
 	errorExp, err := NewExporter(sender, Source("FakeSource"), QueueSize(-10))
 	if errorExp != nil || err == nil {
 		t.FailNow()
@@ -254,14 +343,13 @@ func TestNegativeQueueSize(t *testing.T) {
 }
 
 func TestQueueErrors(t *testing.T) {
-	sender := &FakeSender{Echo: false}
-	errorExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), QueueSize(0), VerboseLogging())
-	errorExp.selfHealthTicker.Stop()
-	errorExp.selfHealthTicker = time.NewTicker(500 * time.Millisecond)
+	sender := newFake()
+	errorExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), QueueSize(0), VerboseLogging(), DisableSelfHealth())
+	errorExp.reportStart(500 * time.Millisecond)
 
-	errorExp.ExportSpan(sd1)
-	errorExp.ExportView(vd1)
-	errorExp.ExportView(vd4)
+	errorExp.processSpan(sd1)
+	errorExp.processView(vd1)
+	errorExp.processView(vd4)
 	time.Sleep(time.Second)
 	errorExp.Stop()
 	if errorExp.SpansDropped() != 1 || errorExp.MetricsDropped() != 2 {
@@ -270,13 +358,12 @@ func TestQueueErrors(t *testing.T) {
 }
 
 func TestSenderErrors(t *testing.T) {
-	errorExp, _ := NewExporter(senderErr, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), VerboseLogging())
-	errorExp.selfHealthTicker.Stop()
-	errorExp.selfHealthTicker = time.NewTicker(500 * time.Millisecond)
+	errorExp, _ := NewExporter(senderErr, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), VerboseLogging(), DisableSelfHealth())
+	errorExp.reportStart(500 * time.Millisecond)
 
-	errorExp.ExportSpan(sd1)
-	errorExp.ExportView(vd1)
-	errorExp.ExportView(vd4)
+	errorExp.processSpan(sd1)
+	errorExp.processView(vd1)
+	errorExp.processView(vd4)
 	time.Sleep(time.Second)
 	errorExp.Stop()
 
