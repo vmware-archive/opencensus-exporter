@@ -1,5 +1,4 @@
-# Wavefront OpenCensus Go Exporter
-<!-- LOGO HERE -->
+# Wavefront OpenCensus Go Exporter [![Build Status][ci-img]][ci-link]
 
 This exporter provides OpenCensus trace and stats support to push metrics, histograms and traces into Wavefront.
 
@@ -57,3 +56,7 @@ See [examples folder](https://github.com/wavefrontHQ/opencensus-exporter/example
 ### Links
 
 - https://opencensus.io/exporters/supported-exporters/go/wavefront/
+
+
+[ci-img]: https://travis-ci.com/wavefrontHQ/opencensus-exporter.svg?branch=master
+[ci-link]: https://travis-ci.com/wavefrontHQ/opencensus-exporter

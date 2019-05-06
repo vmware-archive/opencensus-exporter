@@ -90,6 +90,9 @@ func (e *Exporter) processSpan(sd *trace.SpanData) {
 		)
 	}
 
+	// Sort span tags by Keys?
+	// sort.SliceStable(spanTags, func(i1, i2 int) bool { return spanTags[i1].Key < spanTags[i2].Key })
+
 	// Span Logs
 	spanLogs := make([]senders.SpanLog, 0, 1+len(sd.Annotations)+len(sd.MessageEvents))
 

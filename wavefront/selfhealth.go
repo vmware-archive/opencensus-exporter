@@ -24,6 +24,10 @@ type _SelfMetrics struct {
 // ReportSelfHealth sends exporter specific metrics to wavefront
 // Currently, only dropped span & metric counts are reported
 func (e *Exporter) ReportSelfHealth() {
+	e.reportStart(DefaultSelfReportDuration)
+}
+
+func (e *Exporter) reportStart(d time.Duration) {
 	e.selfHealthTicker = time.NewTicker(DefaultSelfReportDuration)
 	e.stopSelfHealth = make(chan struct{})
 	go func() {
