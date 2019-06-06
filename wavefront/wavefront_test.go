@@ -310,7 +310,11 @@ func TestProcessView(tt *testing.T) {
 	sender.TestData["v1"] = []interface{}{"v1", float64(4.5), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v1unit"}}
 	sender.TestData["v2"] = []interface{}{"v2", float64(4), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v1unit"}}
 	sender.TestData["v3"] = []interface{}{"v3", float64(4), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v3unit"}}
-	sender.TestData["v4"] = []interface{}{"v4", []histogram.Centroid{histogram.Centroid{Value: 9, Count: 1}, histogram.Centroid{Value: 20, Count: 2}, histogram.Centroid{Value: 37, Count: 1}}, map[histogram.Granularity]bool{0: true}, int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+	sender.TestData["v4.max"] = []interface{}{"v4.max", float64(27), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+	sender.TestData["v4.mean"] = []interface{}{"v4.mean", float64(18), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+	sender.TestData["v4.count"] = []interface{}{"v4.count", float64(2), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+	sender.TestData["v4.sumsq"] = []interface{}{"v4.sumsq", float64(0), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
+	sender.TestData["v4.min"] = []interface{}{"v4.min", float64(9), int64(67890001), "FakeSource", map[string]string{"application": "test-app", "cluster": "none", "service": "test-service", "shard": "none", "unit": "v4unit"}}
 
 	fakeExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
 
@@ -458,7 +462,7 @@ func BenchmarkProcessView(bb *testing.B) {
 	})
 	bb.Run("Distribution", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
-			benchExp.processView(vd2)
+			benchExp.processView(vd4)
 		}
 	})
 }

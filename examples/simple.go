@@ -88,12 +88,12 @@ func main() {
 
 func parent(ctx context.Context) {
 	ctx, span := trace.StartSpan(ctx, "main")
-	start_time := time.Now()
+	startTime := time.Now()
 	for i := 0; i < 5; i++ {
 		stats.Record(ctx, totalWorks.M(1))
 		work(ctx, i+1)
 	}
-	stats.Record(ctx, workTime.M(time.Since(start_time).Nanoseconds()/1e6))
+	stats.Record(ctx, workTime.M(time.Since(startTime).Nanoseconds()/1e6))
 	time.Sleep(500 * time.Millisecond)
 	span.End()
 }
@@ -102,6 +102,6 @@ func work(ctx context.Context, index int) {
 	ctx, span := trace.StartSpan(ctx, fmt.Sprintf("work-%d", index))
 	defer span.End()
 
-	rand_time := 100 + rand.Int63n(100)
-	time.Sleep(time.Duration(rand_time) * time.Millisecond) // work
+	randTime := 100 + rand.Int63n(100)
+	time.Sleep(time.Duration(randTime) * time.Millisecond) // work
 }

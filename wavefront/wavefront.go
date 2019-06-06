@@ -17,13 +17,14 @@ import (
 )
 
 const (
-	DefaultSource    = ""
+	// DefaultQueueSize is used when QueueSize option is not specified
 	DefaultQueueSize = 1000
 
-	nanoToMillis int64 = 1e6
+	defaultSource       = ""
+	nanoToMillis  int64 = 1e6
 )
 
-// Options
+// Options is all the configurable options
 type Options struct {
 	Source            string
 	Hgs               map[histogram.Granularity]bool
@@ -33,8 +34,10 @@ type Options struct {
 	DisableSelfHealth bool
 }
 
+// Option allows customization
 type Option func(*Options)
-type SendCmd func()
+
+type sendCmd func()
 
 // Source overrides the deault source
 func Source(source string) Option {
@@ -85,7 +88,7 @@ func VerboseLogging() Option {
 	}
 }
 
-// Exporter
+// Exporter is the main exporter
 type Exporter struct {
 	sender senders.Sender
 	sem    chan struct{}
@@ -105,7 +108,7 @@ type Exporter struct {
 // Option... add additional options to the exporter.
 func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 	defOptions := Options{
-		Source: DefaultSource,
+		Source: defaultSource,
 		Hgs:    map[histogram.Granularity]bool{},
 		qSize:  DefaultQueueSize,
 	}
@@ -137,6 +140,7 @@ func (e *Exporter) Flush() {
 	e.sender.Flush()
 }
 
+// Stop flushes and closes the queue
 func (e *Exporter) Stop() {
 	e.StopSelfHealth()
 	e.Flush()
@@ -156,7 +160,7 @@ func (e *Exporter) ExportView(viewData *view.Data) {
 
 // Helpers
 
-func (e *Exporter) queueCmd(cmd SendCmd) bool {
+func (e *Exporter) queueCmd(cmd sendCmd) bool {
 	if e.sem == nil {
 		return false
 	}
@@ -175,11 +179,13 @@ func (e *Exporter) semRelease() {
 	e.wg.Done()
 }
 
-func (e *Exporter) logError(msg string, err error) {
-	if err != nil {
-		atomic.AddUint64(&e.senderErrors, 1)
-		if e.VerboseLogging {
-			log.Println(msg, err)
+func (e *Exporter) logError(msg string, errs ...error) {
+	for ei, err := range errs {
+		if err != nil {
+			atomic.AddUint64(&e.senderErrors, 1)
+			if e.VerboseLogging {
+				log.Printf("%s (%d): %s", msg, ei, err)
+			}
 		}
 	}
 }

@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	DefaultSelfReportDuration = 5 * time.Minute
+	// DefaultSelfReportInterval specifies self-health report interval
+	DefaultSelfReportInterval = 5 * time.Minute
 	metDropReportName         = "opencensus.exporter.dropped_metrics"
 	spanDropReportName        = "opencensus.exporter.dropped_spans"
 	senderErrorsReportName    = "opencensus.exporter.sender_errors"
@@ -24,11 +25,11 @@ type _SelfMetrics struct {
 // ReportSelfHealth sends exporter specific metrics to wavefront
 // Currently, only dropped span & metric counts are reported
 func (e *Exporter) ReportSelfHealth() {
-	e.reportStart(DefaultSelfReportDuration)
+	e.reportStart(DefaultSelfReportInterval)
 }
 
 func (e *Exporter) reportStart(d time.Duration) {
-	e.selfHealthTicker = time.NewTicker(DefaultSelfReportDuration)
+	e.selfHealthTicker = time.NewTicker(DefaultSelfReportInterval)
 	e.stopSelfHealth = make(chan struct{})
 	go func() {
 		for {
@@ -93,7 +94,7 @@ func (e *Exporter) sendSelfHealth() {
 	}
 
 	if err != nil {
-		e.logError("Report SelfHealth failed:", err)
+		e.logError("Report SelfHealth failed", err)
 	}
 }
 
@@ -103,7 +104,7 @@ func (e *Exporter) SpansDropped() uint64 {
 	return atomic.LoadUint64(&e.spansDropped)
 }
 
-// SpansDropped counts metrics dropped
+// MetricsDropped counts metrics dropped
 // when exporter queue is full
 func (e *Exporter) MetricsDropped() uint64 {
 	return atomic.LoadUint64(&e.metricsDropped)

@@ -4,8 +4,6 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/wavefronthq/wavefront-sdk-go/histogram"
-
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
@@ -13,11 +11,18 @@ import (
 
 const (
 	unitTagKey = "unit"
+
+	// Distribution Aggregation metric suffixes
+	distMinSuffix   = ".min"
+	distMaxSuffix   = ".max"
+	distMeanSuffix  = ".mean"
+	distCountSuffix = ".count"
+	distSumSqSuffix = ".sumsq"
 )
 
 // view conversion
 func (e *Exporter) processView(vd *view.Data) {
-	var cmd SendCmd
+	var cmd sendCmd
 
 	// Custom Tags & App Tags
 	appTags := e.appMap
@@ -40,7 +45,7 @@ func (e *Exporter) processView(vd *view.Data) {
 			cmd = func() {
 				defer e.semRelease()
 
-				e.logError("Error sending metric:", e.sender.SendMetric(
+				e.logError("Error sending metric", e.sender.SendMetric(
 					vd.View.Name,
 					value, timestamp, e.Source,
 					pointTags,
@@ -52,7 +57,7 @@ func (e *Exporter) processView(vd *view.Data) {
 			cmd = func() {
 				defer e.semRelease()
 
-				e.logError("Error sending metric:", e.sender.SendMetric(
+				e.logError("Error sending metric", e.sender.SendMetric(
 					vd.View.Name,
 					value, timestamp, e.Source,
 					pointTags,
@@ -72,16 +77,16 @@ func (e *Exporter) processView(vd *view.Data) {
 			}
 
 		case *view.DistributionData:
-			centroids := makeCentroids(vd.View.Aggregation.Buckets, agg)
 			cmd = func() {
 				defer e.semRelease()
 
-				e.logError("Error sending histogram:", e.sender.SendDistribution(
-					vd.View.Name,
-					centroids, e.Hgs,
-					timestamp, e.Source,
-					pointTags,
-				))
+				// Output OpenCensus distribution as a set of metrics
+				e.logError("Error sending histogram",
+					e.sender.SendMetric(vd.View.Name+distCountSuffix, float64(agg.Count), timestamp, e.Source, pointTags),
+					e.sender.SendMetric(vd.View.Name+distMinSuffix, agg.Min, timestamp, e.Source, pointTags),
+					e.sender.SendMetric(vd.View.Name+distMaxSuffix, agg.Max, timestamp, e.Source, pointTags),
+					e.sender.SendMetric(vd.View.Name+distMeanSuffix, agg.Mean, timestamp, e.Source, pointTags),
+					e.sender.SendMetric(vd.View.Name+distSumSqSuffix, agg.SumOfSquaredDev, timestamp, e.Source, pointTags))
 			}
 
 		default:
@@ -103,41 +108,4 @@ func makePointTags(tags []tag.Tag, otherTags map[string]string) map[string]strin
 		pointTags[k] = v
 	}
 	return pointTags
-}
-
-func makeCentroids(bounds []float64, agg *view.DistributionData) []histogram.Centroid {
-	counts := agg.CountPerBucket
-	if len(bounds) != len(counts)-1 {
-		log.Println("Error: Bounds and Bucket counts don't match")
-		return nil
-	}
-
-	centroids := make([]histogram.Centroid, 0, len(counts))
-	for i, c := range counts {
-		var m float64
-		switch {
-		case c == 1:
-			m = agg.ExemplarsPerBucket[i].Value
-		case c > 1:
-			switch i {
-			case 0:
-				m = mean2(agg.Min, float64(bounds[i]))
-			case len(counts) - 1:
-				m = mean2(float64(bounds[i-1]), agg.Max)
-			default:
-				m = mean2(float64(bounds[i-1]), float64(bounds[i]))
-			}
-		default:
-			continue // Count is <= 0. Skip
-		}
-		centroids = append(centroids, histogram.Centroid{
-			Value: m, Count: int(c), // overflow? if int is 32bit
-		})
-	}
-
-	return centroids
-}
-
-func mean2(a, b float64) float64 {
-	return (a + b) / 2.0
 }

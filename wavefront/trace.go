@@ -132,22 +132,22 @@ func (e *Exporter) processSpan(sd *trace.SpanData) {
 
 	startTime := sd.StartTime.UnixNano() / nanoToMillis
 	endTime := sd.EndTime.Sub(sd.StartTime).Nanoseconds() / nanoToMillis
-	traceId := convertTraceId(sd.TraceID)
-	spanId := convertSpanId(sd.SpanID)
+	traceID := convertTraceID(sd.TraceID)
+	spanID := convertSpanID(sd.SpanID)
 	var parents []string
 	pspanBytes := [8]byte(sd.ParentSpanID)
 	if !bytes.Equal(zeroSpanID[:], pspanBytes[:]) { //don't add parent in case of root span
-		parents = []string{convertSpanId(sd.ParentSpanID)}
+		parents = []string{convertSpanID(sd.ParentSpanID)}
 	}
 
 	cmd := func() {
 		defer e.semRelease()
 
-		e.logError("Error sending span: ", e.sender.SendSpan(
+		e.logError("Error sending span", e.sender.SendSpan(
 			sd.Name,
 			startTime, endTime,
 			e.Source,
-			traceId, spanId, parents, nil,
+			traceID, spanID, parents, nil,
 			spanTags, spanLogs,
 		))
 	}
@@ -157,7 +157,7 @@ func (e *Exporter) processSpan(sd *trace.SpanData) {
 	}
 }
 
-func convertTraceId(val trace.TraceID) string {
+func convertTraceID(val trace.TraceID) string {
 	b := [36]byte{}
 	copy(b[:], zeroUUID) //TODO: directly set '-'?
 	hex.Encode(b[:], val[:4])
@@ -168,7 +168,7 @@ func convertTraceId(val trace.TraceID) string {
 	return string(b[:])
 }
 
-func convertSpanId(val trace.SpanID) string {
+func convertSpanID(val trace.SpanID) string {
 	// RFC4122 format
 	b := [36]byte{}
 	copy(b[:], zeroUUID)

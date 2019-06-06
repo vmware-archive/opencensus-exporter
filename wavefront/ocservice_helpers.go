@@ -6,6 +6,7 @@ import (
 	"github.com/wavefronthq/wavefront-sdk-go/application"
 )
 
+// ServiceOptions is used for opencensus-service exporter
 type ServiceOptions struct {
 	SourceOverride    *string           `mapstructure:"override_source,omitempty"`
 	ApplicationName   *string           `mapstructure:"application_name,omitempty"`
@@ -16,6 +17,7 @@ type ServiceOptions struct {
 	VerboseLogging    *bool             `mapstructure:"verbose_logging,omitempty"`
 }
 
+// WithServiceOptions is used for opencensus-service exporter
 func WithServiceOptions(so *ServiceOptions) Option {
 	return func(o *Options) {
 		if so.SourceOverride != nil {
