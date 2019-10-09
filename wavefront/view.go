@@ -43,8 +43,6 @@ func (e *Exporter) processView(vd *view.Data) {
 		case *view.CountData:
 			value := float64(agg.Value)
 			cmd = func() {
-				defer e.semRelease()
-
 				e.logError("Error sending metric", e.sender.SendMetric(
 					vd.View.Name,
 					value, timestamp, e.Source,
@@ -55,8 +53,6 @@ func (e *Exporter) processView(vd *view.Data) {
 		case *view.LastValueData:
 			value := agg.Value
 			cmd = func() {
-				defer e.semRelease()
-
 				e.logError("Error sending metric", e.sender.SendMetric(
 					vd.View.Name,
 					value, timestamp, e.Source,
@@ -67,8 +63,6 @@ func (e *Exporter) processView(vd *view.Data) {
 		case *view.SumData:
 			value := agg.Value
 			cmd = func() {
-				defer e.semRelease()
-
 				e.logError("Error sending metric:", e.sender.SendMetric(
 					vd.View.Name,
 					value, timestamp, e.Source,
@@ -78,8 +72,6 @@ func (e *Exporter) processView(vd *view.Data) {
 
 		case *view.DistributionData:
 			cmd = func() {
-				defer e.semRelease()
-
 				// Output OpenCensus distribution as a set of metrics
 				e.logError("Error sending histogram",
 					e.sender.SendMetric(vd.View.Name+distCountSuffix, float64(agg.Count), timestamp, e.Source, pointTags),

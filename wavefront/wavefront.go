@@ -91,8 +91,10 @@ func VerboseLogging() Option {
 // Exporter is the main exporter
 type Exporter struct {
 	sender senders.Sender
-	sem    chan struct{}
-	wg     sync.WaitGroup
+
+	wg      sync.WaitGroup
+	lock    sync.Mutex
+	running bool
 
 	// Embeddings
 	Options
@@ -124,7 +126,7 @@ func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 	exp := &Exporter{
 		sender:  sender,
 		Options: defOptions,
-		sem:     make(chan struct{}, defOptions.qSize),
+		running: true,
 	}
 
 	if !exp.DisableSelfHealth {
@@ -142,10 +144,11 @@ func (e *Exporter) Flush() {
 
 // Stop flushes and closes the queue
 func (e *Exporter) Stop() {
+	e.lock.Lock()
+	e.running = false
+	e.lock.Unlock()
 	e.StopSelfHealth()
 	e.Flush()
-	close(e.sem)
-	e.sem = nil
 }
 
 // ExportSpan exports given span to Wavefront
@@ -160,23 +163,22 @@ func (e *Exporter) ExportView(viewData *view.Data) {
 
 // Helpers
 
-func (e *Exporter) queueCmd(cmd sendCmd) bool {
-	if e.sem == nil {
-		return false
-	}
-	select {
-	case e.sem <- struct{}{}:
-		e.wg.Add(1)
-		go cmd()
-		return true
-	default:
-		return false
-	}
+func (e *Exporter) isRunning() bool {
+	e.lock.Lock()
+	defer e.lock.Unlock()
+	return e.running
 }
 
-func (e *Exporter) semRelease() {
-	<-e.sem
-	e.wg.Done()
+func (e *Exporter) queueCmd(cmd sendCmd) bool {
+	if !e.isRunning() {
+		return false
+	}
+	go func() {
+		e.wg.Add(1)
+		cmd()
+		e.wg.Done()
+	}()
+	return true
 }
 
 func (e *Exporter) logError(msg string, errs ...error) {
