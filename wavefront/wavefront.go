@@ -163,18 +163,14 @@ func (e *Exporter) ExportView(viewData *view.Data) {
 
 // Helpers
 
-func (e *Exporter) isRunning() bool {
+func (e *Exporter) queueCmd(cmd sendCmd) bool {
 	e.lock.Lock()
 	defer e.lock.Unlock()
-	return e.running
-}
-
-func (e *Exporter) queueCmd(cmd sendCmd) bool {
-	if !e.isRunning() {
+	if !e.running {
 		return false
 	}
+	e.wg.Add(1)
 	go func() {
-		e.wg.Add(1)
 		cmd()
 		e.wg.Done()
 	}()
