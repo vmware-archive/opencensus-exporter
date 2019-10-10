@@ -141,8 +141,6 @@ func (e *Exporter) processSpan(sd *trace.SpanData) {
 	}
 
 	cmd := func() {
-		defer e.semRelease()
-
 		e.logError("Error sending span", e.sender.SendSpan(
 			sd.Name,
 			startTime, endTime,

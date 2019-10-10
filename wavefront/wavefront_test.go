@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/wavefronthq/wavefront-sdk-go/application"
 	"github.com/wavefronthq/wavefront-sdk-go/histogram"
 	"github.com/wavefronthq/wavefront-sdk-go/senders"
@@ -57,6 +59,7 @@ func (s *FakeSender) update(name string, have []interface{}) {
 
 	if reflect.DeepEqual(s.TestData[name], have) {
 		delete(s.TestData, name)
+		fmt.Println("delete", name)
 	} else {
 		fmt.Println("MISMATCH", name)
 		fmt.Printf("HAVE %#v\n", have)
@@ -296,11 +299,10 @@ func TestProcessSpan(t *testing.T) {
 
 	fakeExp.processSpan(sd1)
 	fakeExp.processSpan(sd2)
-	fakeExp.Flush()
+	fakeExp.Stop()
 
-	if !sender.verify() || fakeExp.SenderErrors() > 0 {
-		t.Fail()
-	}
+	assert.True(t, sender.verify())
+	assert.EqualValues(t, 0, fakeExp.SenderErrors())
 }
 
 func TestProcessView(tt *testing.T) {
@@ -331,7 +333,7 @@ func TestProcessView(tt *testing.T) {
 		fakeExp.processView(vd4)
 	})
 
-	fakeExp.Flush()
+	fakeExp.Stop()
 
 	if !sender.verify() || fakeExp.SenderErrors() > 0 {
 		tt.Fail()
@@ -351,14 +353,14 @@ func TestQueueErrors(t *testing.T) {
 	errorExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), QueueSize(0), VerboseLogging(), DisableSelfHealth())
 	errorExp.reportStart(500 * time.Millisecond)
 
+	errorExp.Stop()
 	errorExp.processSpan(sd1)
 	errorExp.processView(vd1)
 	errorExp.processView(vd4)
 	time.Sleep(time.Second)
-	errorExp.Stop()
-	if errorExp.SpansDropped() != 1 || errorExp.MetricsDropped() != 2 {
-		t.FailNow()
-	}
+
+	assert.EqualValues(t, 1, errorExp.SpansDropped())
+	assert.EqualValues(t, 2, errorExp.MetricsDropped())
 }
 
 func TestSenderErrors(t *testing.T) {
@@ -374,6 +376,24 @@ func TestSenderErrors(t *testing.T) {
 	if errorExp.SenderErrors() < 3 {
 		t.FailNow()
 	}
+}
+
+func TestProcessViewRaceCondition(tt *testing.T) {
+	sender := newFake()
+
+	fakeExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		fakeExp.processView(vd1)
+	}()
+	go func() {
+		defer wg.Done()
+		fakeExp.Stop()
+	}()
+	wg.Wait()
 }
 
 func BenchmarkProcessSpan(bb *testing.B) {
