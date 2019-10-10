@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/wavefronthq/wavefront-sdk-go/application"
-	"github.com/wavefronthq/wavefront-sdk-go/event"
 	"github.com/wavefronthq/wavefront-sdk-go/histogram"
 	"github.com/wavefronthq/wavefront-sdk-go/senders"
 
@@ -122,10 +121,6 @@ func (s *FakeSender) SendSpan(name string, startMillis, durationMillis int64, so
 		fmt.Println(name, startMillis, durationMillis, source, traceID, spanID, parents, followsFrom, tags, spanLogs)
 	}
 	return s.Error
-}
-
-func (s *FakeSender) SendEvent(name string, startMillis, endMillis int64, source string, tags []string, setters ...event.Option) error {
-	return nil
 }
 
 func (s *FakeSender) GetFailureCount() int64 {
