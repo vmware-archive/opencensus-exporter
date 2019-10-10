@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/wavefronthq/wavefront-sdk-go/application"
+	"github.com/wavefronthq/wavefront-sdk-go/event"
 	"github.com/wavefronthq/wavefront-sdk-go/histogram"
 	"github.com/wavefronthq/wavefront-sdk-go/senders"
 
@@ -121,6 +122,10 @@ func (s *FakeSender) SendSpan(name string, startMillis, durationMillis int64, so
 		fmt.Println(name, startMillis, durationMillis, source, traceID, spanID, parents, followsFrom, tags, spanLogs)
 	}
 	return s.Error
+}
+
+func (s *FakeSender) SendEvent(name string, startMillis, endMillis int64, source string, tags []string, setters ...event.Option) error {
+	return nil
 }
 
 func (s *FakeSender) GetFailureCount() int64 {
@@ -299,7 +304,7 @@ func TestProcessSpan(t *testing.T) {
 
 	fakeExp.processSpan(sd1)
 	fakeExp.processSpan(sd2)
-	fakeExp.Flush()
+	fakeExp.Stop()
 
 	assert.True(t, sender.verify())
 	assert.EqualValues(t, 0, fakeExp.SenderErrors())
@@ -333,7 +338,7 @@ func TestProcessView(tt *testing.T) {
 		fakeExp.processView(vd4)
 	})
 
-	fakeExp.Flush()
+	fakeExp.Stop()
 
 	if !sender.verify() || fakeExp.SenderErrors() > 0 {
 		tt.Fail()

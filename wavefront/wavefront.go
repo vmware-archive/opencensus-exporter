@@ -93,7 +93,7 @@ type Exporter struct {
 	sender senders.Sender
 
 	wg      sync.WaitGroup
-	lock    sync.Mutex
+	lock    sync.RWMutex
 	running bool
 
 	// Embeddings
@@ -136,19 +136,14 @@ func NewExporter(sender senders.Sender, option ...Option) (*Exporter, error) {
 	return exp, nil
 }
 
-// Flush blocks until the queue is flushed at the Sender.
-func (e *Exporter) Flush() {
-	e.wg.Wait()
-	e.sender.Flush()
-}
-
-// Stop flushes and closes the queue
+// Stop the exporter and flushes the sender
 func (e *Exporter) Stop() {
 	e.lock.Lock()
 	e.running = false
 	e.lock.Unlock()
 	e.StopSelfHealth()
-	e.Flush()
+	e.wg.Wait()
+	e.sender.Flush()
 }
 
 // ExportSpan exports given span to Wavefront
@@ -164,8 +159,8 @@ func (e *Exporter) ExportView(viewData *view.Data) {
 // Helpers
 
 func (e *Exporter) queueCmd(cmd sendCmd) bool {
-	e.lock.Lock()
-	defer e.lock.Unlock()
+	e.lock.RLock()
+	defer e.lock.RUnlock()
 	if !e.running {
 		return false
 	}
