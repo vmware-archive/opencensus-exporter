@@ -54,13 +54,13 @@ func (e *Exporter) StopSelfHealth() {
 	e.stopSelfHealth <- struct{}{}
 	e.stopSelfHealth = nil
 	e.sendSelfHealth()
-	if e.senderErrors > 0 {
+	if atomic.LoadUint64(&e.senderErrors) > 0 {
 		log.Printf("Warning: Total %d send errors", e.senderErrors)
 	}
-	if e.spansDropped > 0 {
+	if atomic.LoadUint64(&e.spansDropped) > 0 {
 		log.Printf("Warning: Total %d spans were dropped", e.spansDropped)
 	}
-	if e.metricsDropped > 0 {
+	if atomic.LoadUint64(&e.metricsDropped) > 0 {
 		log.Printf("Warning: Total %d metrics were dropped", e.metricsDropped)
 	}
 }
