@@ -378,22 +378,33 @@ func TestSenderErrors(t *testing.T) {
 	}
 }
 
-func TestProcessViewRaceCondition(tt *testing.T) {
-	sender := newFake()
+func TestProcessViewRaceCondition(t *testing.T) {
+	opts := []Option{Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE)}
+	tests := []struct {
+		name    string
+		Options []Option
+	}{
+		{"disableSelfHealth", append(opts, DisableSelfHealth())},
+		{"enableSelfHealth", opts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := newFake()
+			fakeExp, _ := NewExporter(sender, opts...)
 
-	fakeExp, _ := NewExporter(sender, Source("FakeSource"), AppTags(appTags), Granularity(histogram.MINUTE), DisableSelfHealth())
-
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		fakeExp.processView(vd1)
-	}()
-	go func() {
-		defer wg.Done()
-		fakeExp.Stop()
-	}()
-	wg.Wait()
+			wg := sync.WaitGroup{}
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				fakeExp.processView(vd1)
+			}()
+			go func() {
+				defer wg.Done()
+				fakeExp.Stop()
+			}()
+			wg.Wait()
+		})
+	}
 }
 
 func BenchmarkProcessSpan(bb *testing.B) {
