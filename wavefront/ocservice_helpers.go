@@ -24,7 +24,8 @@ func WithServiceOptions(so *ServiceOptions) Option {
 			o.Source = *so.SourceOverride
 		}
 		if so.ApplicationName != nil && so.ServiceName != nil {
-			o.appMap = application.New(*so.ApplicationName, *so.ServiceName).Map()
+			app := application.New(*so.ApplicationName, *so.ServiceName)
+			o.appMap = app.Map()
 		}
 		if so.CustomTags != nil {
 			for k, v := range so.CustomTags {
