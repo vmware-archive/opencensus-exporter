@@ -1,3 +1,6 @@
+```
+VMware has ended active development of this project, this repository will no longer be updated.
+```
 # Wavefront OpenCensus Go Exporter [![Build Status][ci-img]][ci-link] [![Go Report Card][go-report-img]][go-report]
 
 This exporter provides OpenCensus trace and stats support to push metrics, histograms and traces into Wavefront.
